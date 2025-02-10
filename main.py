@@ -1,14 +1,20 @@
 import pvporcupine
-import pyaudio
+import sounddevice as sd
 import struct
-import time
+import json
+import queue
 import pyttsx3
+import ollama
+from vosk import Model, KaldiRecognizer
+import numpy as np
 
-# Initialize Text-to-Speech (TTS) engine
+# ============================ INITIALIZATION ============================
+
+# Text-to-Speech (TTS) Engine
 engine = pyttsx3.init()
 engine.setProperty("rate", 180)  # Adjust speaking speed
 
-# Initialize Porcupine Wake Word Detection
+# Wake Word Detection (Porcupine)
 try:
     porcupine = pvporcupine.create(
         access_key="xpiJY3udZ34lkRnMmGvSp0R8vwGWhy8acuYEjWw41s3WTt1UznZwuA==",
@@ -21,33 +27,76 @@ except Exception as e:
     print(f"❌ Error initializing Porcupine: {e}")
     exit(1)
 
-# Initialize PyAudio
-try:
-    pa = pyaudio.PyAudio()
-    audio_stream = pa.open(
-        rate=porcupine.sample_rate,
-        channels=1,
-        format=pyaudio.paInt16,
-        input=True,
-        frames_per_buffer=porcupine.frame_length
-    )
-except Exception as e:
-    print(f"❌ Error accessing microphone: {e}")
-    exit(1)
+# Speech-to-Text (STT) Model (Vosk)
+vosk_model_path = r"C:\Users\LENOVO\Desktop\medi\model"  # Change this if needed
+vosk_model = Model(vosk_model_path)
+recognizer = KaldiRecognizer(vosk_model, 16000)
 
-# Function to convert text to speech
+# SoundDevice Setup for STT
+audio_queue = queue.Queue()
+
+def audio_callback(indata, frames, time, status):
+    if status:
+        print(status)
+    audio_queue.put(indata.copy())
+
+stream = sd.InputStream(samplerate=16000, channels=1, dtype='int16', callback=audio_callback)
+stream.start()
+
+# ============================ FUNCTIONALITY ============================
+
 def speak(text):
-    print(f"🎙️ {text}")
+    """ Convert text to speech """
+    print(f"🎙️ Speaking: {text}")
     engine.say(text)
     engine.runAndWait()
 
-# Wake Word Listener
+def listen():
+    """ Capture audio and convert it to text using Vosk """
+    print("🎤 Listening for command...")
+    
+    while True:
+        data = audio_queue.get()
+        audio_data = np.frombuffer(data, dtype=np.int16).tobytes()
+        
+        if recognizer.AcceptWaveform(audio_data):
+            result = json.loads(recognizer.Result())["text"]
+            if result:
+                print(f"📝 Recognized: {result}")
+                return result  # Return recognized text
+
+def generate_health_response(query):
+    """ Stream AI response for real-time feedback using TinyLlama """
+    print("🤖 Processing response...")
+
+    try:
+        response = ollama.chat(model="tinyllama", messages=[{"role": "user", "content": query}], stream=True)
+        
+        final_response = ""
+        for chunk in response:
+            if "message" in chunk and "content" in chunk["message"]:
+                content = chunk["message"]["content"]
+                print(content, end="", flush=True)  # Show live updates
+                final_response += content
+
+        return final_response
+
+    except Exception as e:  # Make sure there's an except block
+        print(f"❌ Error: {e}")
+        return "I'm facing some issues fetching the response."
+
+
+
+
 def listen_for_wake_word():
+    """ Continuously listens for wake words to activate or deactivate assistant """
     print("🎙️ Listening for 'Hey Medi' to activate... (Say 'Ok Goodbye' to deactivate)")
+
     while True:
         try:
-            pcm = audio_stream.read(porcupine.frame_length, exception_on_overflow=False)
-            pcm = struct.unpack_from("h" * porcupine.frame_length, pcm)
+            pcm = np.zeros(porcupine.frame_length, dtype=np.int16)
+            audio_data = audio_queue.get()
+            pcm[:len(audio_data)] = np.frombuffer(audio_data, dtype=np.int16)
         except Exception as e:
             print(f"❌ Microphone read error: {e}")
             continue  
@@ -57,19 +106,27 @@ def listen_for_wake_word():
         if result == 0:  # "Hey Medi" detected
             print("🔥 Wake Word Detected! Assistant Activated.")
             speak("Yes sir, have a good health. How can I help you?")
+            run_voice_assistant()  # Start assistant after wake word
         elif result == 1:  # "Ok Goodbye" detected
             print("❌ Stop Command Detected! Shutting down.")
             speak("Ok goodbye. Have a great day.")
             cleanup()
 
-# Cleanup Function
+def run_voice_assistant():
+    """ Main loop for processing voice commands """
+    while True:
+        user_query = listen()  # Get user input via voice
+        if user_query:
+            response = generate_health_response(user_query)  # Get AI response
+            speak(response)  # Speak response
+
 def cleanup():
+    """ Clean up and close resources """
     print("🔄 Cleaning up...")
-    audio_stream.stop_stream()
-    audio_stream.close()
-    pa.terminate()
+    stream.stop()
+    stream.close()
     porcupine.delete()
     exit(0)
 
-# Start Listening for Wake Word
+# ============================ START ASSISTANT ============================
 listen_for_wake_word()
