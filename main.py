@@ -1,71 +1,75 @@
 import pvporcupine
 import pyaudio
 import struct
-import pyttsx3
 import time
+import pyttsx3
 
-# Initialize pyttsx3 for text-to-speech
+# Initialize Text-to-Speech (TTS) engine
 engine = pyttsx3.init()
-engine.setProperty('rate', 170)  # Adjust speaking speed
-engine.setProperty('volume', 1.0)  # Set volume level to max
+engine.setProperty("rate", 180)  # Adjust speaking speed
 
-# Load Porcupine wake word models (Corrected)
-porcupine = pvporcupine.create(
-    access_key="xpiJY3udZ34lkRnMmGvSp0R8vwGWhy8acuYEjWw41s3WTt1UznZwuA==",  # Your actual Picovoice access key
-    keyword_paths=[
-        "C:/Users/LENOVO/Desktop/medi/hey-Med-I_en_windows_v3_0_0.ppn",  # "Hey Medi"
-        "C:/Users/LENOVO/Desktop/medi/ok-goodbye_en_windows_v3_0_0.ppn"  # "Stop Med I" (or similar)
-    ]
-)
+# Initialize Porcupine Wake Word Detection
+try:
+    porcupine = pvporcupine.create(
+        access_key="xpiJY3udZ34lkRnMmGvSp0R8vwGWhy8acuYEjWw41s3WTt1UznZwuA==",
+        keyword_paths=[
+            r"C:\Users\LENOVO\Desktop\medi\hey-Med-I_en_windows_v3_0_0.ppn",
+            r"C:\Users\LENOVO\Desktop\medi\ok-goodbye_en_windows_v3_0_0.ppn"
+        ]
+    )
+except Exception as e:
+    print(f"❌ Error initializing Porcupine: {e}")
+    exit(1)
 
-# Function to speak text
+# Initialize PyAudio
+try:
+    pa = pyaudio.PyAudio()
+    audio_stream = pa.open(
+        rate=porcupine.sample_rate,
+        channels=1,
+        format=pyaudio.paInt16,
+        input=True,
+        frames_per_buffer=porcupine.frame_length
+    )
+except Exception as e:
+    print(f"❌ Error accessing microphone: {e}")
+    exit(1)
+
+# Function to convert text to speech
 def speak(text):
+    print(f"🎙️ {text}")
     engine.say(text)
     engine.runAndWait()
 
-# Initialize microphone input
-pa = pyaudio.PyAudio()
-audio_stream = pa.open(
-    rate=porcupine.sample_rate,
-    channels=1,
-    format=pyaudio.paInt16,
-    input=True,
-    frames_per_buffer=porcupine.frame_length
-)
-
+# Wake Word Listener
 def listen_for_wake_word():
-    print("Listening for 'Hey Medi'... 🎙️ (Auto-stops after 10 min or 'Stop Med I')")
-
-    start_time = time.time()  # Start timer
-    max_duration = 10 * 60  # 10 minutes in seconds
-
+    print("🎙️ Listening for 'Hey Medi' to activate... (Say 'Ok Goodbye' to deactivate)")
     while True:
-        # Read audio data
-        pcm = audio_stream.read(porcupine.frame_length, exception_on_overflow=False)
-        pcm = struct.unpack_from("h" * porcupine.frame_length, pcm)
+        try:
+            pcm = audio_stream.read(porcupine.frame_length, exception_on_overflow=False)
+            pcm = struct.unpack_from("h" * porcupine.frame_length, pcm)
+        except Exception as e:
+            print(f"❌ Microphone read error: {e}")
+            continue  
 
-        # Check if a wake word is detected
         result = porcupine.process(pcm)
 
         if result == 0:  # "Hey Medi" detected
-            print("Wake Word Detected! 🔥")
-            speak("Yes sir, have a good health. How can I assist you today?")
+            print("🔥 Wake Word Detected! Assistant Activated.")
+            speak("Yes sir, have a good health. How can I help you?")
+        elif result == 1:  # "Ok Goodbye" detected
+            print("❌ Stop Command Detected! Shutting down.")
+            speak("Ok goodbye. Have a great day.")
+            cleanup()
 
-        elif result == 1:  # "Stop Med I" detected
-            print("Stop Command Detected! ❌")
-            speak("Goodbye, take care!")
-            break  # Exit loop immediately
-
-        # Auto-stop after 10 minutes
-        if time.time() - start_time > max_duration:
-            print("Auto Stopping after 10 minutes... ⏳")
-            speak("Session timeout. See you next time!")
-            break
-
-    # Cleanup resources
+# Cleanup Function
+def cleanup():
+    print("🔄 Cleaning up...")
     audio_stream.stop_stream()
     audio_stream.close()
     pa.terminate()
+    porcupine.delete()
+    exit(0)
 
-# Start listening for wake word
+# Start Listening for Wake Word
 listen_for_wake_word()

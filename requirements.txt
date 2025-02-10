@@ -1,0 +1,6 @@
+pvporcupine
+pyaudio
+speechrecognition
+pyttsx3
+gpt4all
+ollama
