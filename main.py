@@ -72,7 +72,7 @@ def generate_health_response(query):
     try:
         response = ollama.chat(
             model="tinyllama",
-            messages=[{"role": "user", "content": query}],
+            messages=[{"role": "user", "content": f"Keep it short: {query}"}],  # Prompt tweak for short responses
             stream=True
         )
 
@@ -82,14 +82,12 @@ def generate_health_response(query):
                 content = chunk["message"]["content"]
                 print(content, end="", flush=True)
                 final_response += content
-    
-
+        
         return final_response
 
     except Exception as e:
         print(f"❌ Error: {e}")
         return "Sorry, something went wrong."
-
 
 
 
